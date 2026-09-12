@@ -4,6 +4,15 @@ A single-source-of-truth generator for the `<title>`/meta description/Open
 Graph/hreflang/JSON-LD block on a multilingual static site. Plain Node.js,
 zero dependencies, no build framework, no npm install.
 
+## In production
+
+This is extracted from the code running on
+[girne-apartment-sale.com](https://girne-apartment-sale.com), where it generates the
+head block for 20 pages — 5 page types across 4 languages (EN/RU/TR/PL) — on a
+vanilla HTML/CSS/JS site deployed to Cloudflare Pages. It was written after
+hand-copied metadata drifted out of sync on exactly that site; the `--check` flag
+runs before every deploy there.
+
 ## Why
 
 On a static multilingual site (no framework, no templating), it's easy to
