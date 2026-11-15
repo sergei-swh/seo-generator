@@ -19,6 +19,16 @@ const DEFAULT_LANG = "en";
 // don't want this script managing your stylesheet tag.
 const STYLESHEET_PATH = "/assets/css/style.css";
 
+// Optional: files whose links get a version, /assets/js/app.js?v=<hash>, so a
+// browser or crawler never draws fresh HTML with a cached old script. Paths as
+// in your HTML, relative to --root. See assets.js.
+const ASSETS = ["/assets/css/style.css", "/assets/js/i18n.js", "/assets/js/app.js"];
+
+// Optional: the time zone article dates are in (IANA name). Dates stay short in
+// this file and are written as midnight there: "2026-10-01T00:00:00+02:00".
+// UTC if omitted.
+const TIME_ZONE = "Europe/Paris";
+
 const IMG_WIDGET = `${DOMAIN}/img/widget.jpg`;
 const IMG_HOUSE = `${DOMAIN}/img/house.jpg`;
 
@@ -116,7 +126,12 @@ const PAGES = {
 
   // type "article": an Article JSON-LD block plus a BreadcrumbList. `langs`
   // says this page exists in English only for now, so it gets no hreflang and
-  // no French file is expected.
+  // no French file is expected. A translation added later can carry its own
+  // datePublished/dateModified in perLang.
+  //
+  // textHash is the fingerprint of the page's <article> text at dateModified.
+  // Edit the text without moving the date and --check fails, printing the new
+  // fingerprint. Get the first one with --article-hashes. See article-text.js.
   notes: {
     type: "article",
     langs: ["en"],
@@ -133,6 +148,7 @@ const PAGES = {
         headline: "Why we build in small batches",
         description: "A batch of twenty is small enough to check every piece by hand.",
         breadcrumbPage: "Small batches",
+        textHash: "6ed39fabac4f",
       },
     },
   },
@@ -163,4 +179,4 @@ function BODY(slug, lang) {
   return { title: esc(t.title), text: esc(t.text) };
 }
 
-module.exports = { DOMAIN, LANGS, DEFAULT_LANG, STYLESHEET_PATH, paths, homeLabel, PAGES, BODY };
+module.exports = { DOMAIN, LANGS, DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, paths, homeLabel, PAGES, BODY };

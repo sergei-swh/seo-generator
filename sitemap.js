@@ -8,8 +8,14 @@
 //
 // Where the date comes from. A page with uncommitted changes (the generator just
 // rewrote it, or you edited it by hand) gets today's date; any other page gets the
-// date of the last commit that touched it. Commit on the same day you generate and
+// date of the last commit that changed it. Commit on the same day you generate and
 // both agree, so --check passes cleanly.
+//
+// "Changed" ignores asset versions (see assets.js). Editing one script rewrites the
+// ?v= on every page; counting that as a change gave every page a new date at once,
+// and dates that move without the page changing are as useless to Google as dates
+// that never move. So both the uncommitted page and each commit in its history are
+// compared with versions stripped, and a commit that only bumped a ?v= is skipped.
 //
 // Nothing else in sitemap.xml (order, changefreq, priority) is touched. URLs the
 // data file doesn't know are left alone and reported, and so are pages missing
@@ -34,7 +40,8 @@ function today() {
 }
 
 // pages: [{ url, file }] — every page the generator writes.
-function run({ root, pages, check = false }) {
+// strip: html => html with asset versions removed (identity if there are none).
+function run({ root, pages, check = false, strip = (html) => html }) {
   if (!exists(root)) return [];
 
   const git = (args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
@@ -44,11 +51,39 @@ function run({ root, pages, check = false }) {
     throw new Error(`${root} has a sitemap.xml but is not inside a git repository, so there are no dates to take`);
   }
 
+  const blobs = new Map();
+  function blob(sha) {
+    if (!blobs.has(sha)) {
+      const text = execFileSync("git", ["-C", root, "cat-file", "blob", sha], { encoding: "utf8", maxBuffer: 64 << 20 });
+      blobs.set(sha, strip(text));
+    }
+    return blobs.get(sha);
+  }
+
   function lastModified(file) {
-    if (git(["status", "--porcelain", "--", file])) return today();
-    const date = git(["log", "-1", "--format=%cs", "--", file]);
-    if (!date) throw new Error(`${file} has no git history and no pending changes`);
-    return date;
+    if (git(["status", "--porcelain", "--", file])) {
+      let head = null;
+      try {
+        // "./" makes the path relative to root, which may be a subdirectory of the repository.
+        head = blob(git(["rev-parse", `HEAD:./${file}`]));
+      } catch {
+        // not in HEAD yet: a new page
+      }
+      const work = strip(fs.readFileSync(path.join(root, file), "utf8"));
+      if (head === null || head !== work) return today();
+    }
+    // Commits that touched the file, newest first, with its blob before and after.
+    // The date is the first one where the file appeared or changed beyond versions.
+    const log = git(["log", "--no-renames", "--raw", "--no-abbrev", "--format=%x00%cs", "--", file]);
+    for (const entry of log.split("\0").filter(Boolean)) {
+      const [date, ...rest] = entry.trim().split("\n");
+      const raw = rest.find((l) => l.startsWith(":"));
+      if (!raw) continue; // a merge with no change of its own to this file
+      const [, , before, after, status] = raw.slice(1).split(/\s+/);
+      if (status === "D") continue;
+      if (/^0+$/.test(before) || blob(before) !== blob(after)) return date;
+    }
+    throw new Error(`${file} has no git history and no pending changes`);
   }
 
   const fileByUrl = new Map(pages.map((p) => [p.url, p.file]));

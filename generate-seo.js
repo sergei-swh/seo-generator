@@ -6,28 +6,37 @@
 //      description, Open Graph, canonical, hreflang, JSON-LD;
 //   2. optional body text between <!-- BODY:key --> .. <!-- /BODY:key --> markers
 //      (see body.js), so crawlers that don't run JavaScript still get the copy;
-//   3. optional <lastmod> dates in sitemap.xml, taken from git (see sitemap.js).
+//   3. optional version queries on links to CSS and JS, ?v=<hash of the file>
+//      (see assets.js);
+//   4. optional <lastmod> dates in sitemap.xml, taken from git (see sitemap.js).
+//
+// With --check it also compares each article's text with the fingerprint stored
+// next to its dateModified (see article-text.js).
 //
 // Zero dependencies — only Node's built-ins. No build step, no framework,
 // nothing to install.
 //
 // Usage:
-//   node generate-seo.js [--root <dir>] [--data <file>] [--check]
+//   node generate-seo.js [--root <dir>] [--data <file>] [--check] [--article-hashes]
 //
-//   --root   directory the HTML files live in (default: current directory)
-//   --data   path to your data module (default: <root>/seo-data.js)
-//   --check  don't write anything; exit 1 if any file would change
-//            (use this in CI / as a pre-deploy check)
+//   --root            directory the HTML files live in (default: current directory)
+//   --data            path to your data module (default: <root>/seo-data.js)
+//   --check           don't write anything; exit 1 if any file would change or an
+//                     article's text no longer matches its dateModified
+//                     (use this in CI / as a pre-deploy check)
+//   --article-hashes  print the text fingerprint of every article page
 //
 // Your data file must export: DOMAIN, LANGS, paths, homeLabel, PAGES. Optional:
-// DEFAULT_LANG, STYLESHEET_PATH, BODY. See seo-data.example.js for the shape and
-// comments. It's plain data (a CommonJS module), not config for this script —
+// DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, BODY. See example/seo-data.js
+// for the shape and comments. It's plain data (a CommonJS module), not config for this script —
 // adapt buildHead()/the *Ld() functions below for your own page types and schema.
 
 const fs = require("fs");
 const path = require("path");
 const body = require("./body");
 const sitemap = require("./sitemap");
+const assetVersions = require("./assets");
+const { articleTextHash, articleDateProblems } = require("./article-text");
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -40,7 +49,7 @@ const DATA_PATH = path.resolve(arg("--data", path.join(ROOT, "seo-data.js")));
 
 if (!fs.existsSync(DATA_PATH)) {
   console.error(`Data file not found: ${DATA_PATH}`);
-  console.error(`Pass --data <path> or put a seo-data.js in --root. See seo-data.example.js for the shape.`);
+  console.error(`Pass --data <path> or put a seo-data.js in --root. See example/seo-data.js for the shape.`);
   process.exit(1);
 }
 
@@ -50,6 +59,10 @@ const { DOMAIN, LANGS, STYLESHEET_PATH, paths, homeLabel, PAGES } = data;
 // It is also the hreflang x-default. Defaults to "en" when LANGS has it (as in
 // version 1), otherwise to the first language.
 const DEFAULT_LANG = data.DEFAULT_LANG || (LANGS.includes("en") ? "en" : LANGS[0]);
+// The time zone article dates are in, as an IANA name ("Europe/Paris"). UTC if unset.
+const TIME_ZONE = data.TIME_ZONE || "UTC";
+// Files whose links get a ?v= version (assets.js). Empty if unset.
+const assets = assetVersions.create(ROOT, data.ASSETS);
 
 function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -145,15 +158,43 @@ function realEstateListingLd(slug, lang, page, url) {
       price: l.offers.price,
       priceCurrency: l.offers.priceCurrency,
       availability: "https://schema.org/InStock",
-      businessFunction: "https://schema.org/Sell",
+      // GoodRelations, not schema.org: schema.org/Sell doesn't exist, and 2.0 put
+      // exactly that here. The property expects a BusinessFunction value from
+      // http://purl.org/goodrelations/v1.
+      businessFunction: "http://purl.org/goodrelations/v1#Sell",
     },
   };
+}
+
+// Google's Rich Results Test rejects a bare date in datePublished/dateModified
+// ("Invalid datetime value", "missing a time zone"), which is what 2.0 wrote. The
+// data file keeps short dates; here they become midnight in TIME_ZONE, with the
+// offset that applies on that day (summer and winter time differ). A value that
+// already has a time is passed through as is.
+function withTimeZone(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+  const name = new Intl.DateTimeFormat("en", { timeZone: TIME_ZONE, timeZoneName: "longOffset" })
+    .formatToParts(new Date(`${date}T12:00:00Z`))
+    .find((p) => p.type === "timeZoneName").value; // "GMT+03:00", or "GMT" for UTC
+  const offset = name === "GMT" ? "+00:00" : name.slice(3);
+  return `${date}T00:00:00${offset}`;
+}
+
+// A translation may come out later than the original and be edited separately, so
+// perLang.<lang> can carry its own datePublished and dateModified.
+function articleDates(page, lang) {
+  const t = page.perLang[lang];
+  const a = page.article;
+  const published = t.datePublished || a.datePublished;
+  const modified = t.dateModified || t.datePublished || a.dateModified || a.datePublished;
+  return { published, modified };
 }
 
 // type "article". Dates are required: a reader (and a search engine) should see
 // when the text was last updated, especially if it quotes figures.
 function articleLd(slug, lang, page, url) {
   const t = page.perLang[lang];
+  const dates = articleDates(page, lang);
   const ld = {
     "@context": "https://schema.org",
     "@type": "Article",
@@ -162,8 +203,8 @@ function articleLd(slug, lang, page, url) {
     inLanguage: lang,
     mainEntityOfPage: { "@type": "WebPage", "@id": url },
     url,
-    datePublished: page.article.datePublished,
-    dateModified: page.article.dateModified || page.article.datePublished,
+    datePublished: withTimeZone(dates.published),
+    dateModified: withTimeZone(dates.modified),
     author: { "@type": "Person", name: page.article.authorName },
     publisher: { "@type": "Organization", name: page.article.publisherName },
     isAccessibleForFree: true,
@@ -219,7 +260,7 @@ function buildHead(slug, lang) {
   lines.push(`<link rel="canonical" href="${url}">`);
   const hreflang = hreflangBlock(slug);
   if (hreflang) lines.push(hreflang);
-  if (STYLESHEET_PATH) lines.push(`<link rel="stylesheet" href="${STYLESHEET_PATH}">`);
+  if (STYLESHEET_PATH) lines.push(`<link rel="stylesheet" href="${assets.versioned(STYLESHEET_PATH)}">`);
 
   for (const ld of LD_BY_TYPE[page.type](slug, lang, page, url)) lines.push(jsonLdScript(ld));
 
@@ -237,6 +278,12 @@ function fileNameFor(slug, lang) {
 function validateData() {
   const problems = [];
   if (!LANGS.includes(DEFAULT_LANG)) problems.push(`DEFAULT_LANG "${DEFAULT_LANG}" is not in LANGS`);
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: TIME_ZONE });
+  } catch {
+    problems.push(`TIME_ZONE "${TIME_ZONE}" is not a time zone name (use one like "Europe/Paris")`);
+  }
+  for (const rel of assets.missing) problems.push(`ASSETS lists ${rel}, which is not in ${ROOT}`);
   for (const lang of LANGS) {
     if (!homeLabel[lang]) problems.push(`homeLabel.${lang} is missing`);
   }
@@ -326,11 +373,35 @@ const bodyChanged = data.BODY
   ? body.run({ root: ROOT, pages: pages.filter((p) => !missing.includes(p.file)), BODY: data.BODY, check: CHECK })
   : [];
 
-// --- 3. Sitemap lastmod (only if <root>/sitemap.xml exists) ---
-// Last, because the date depends on whether a page has uncommitted changes, and
-// steps 1 and 2 may have just made some.
+// --- 3. Asset versions (only if the data file exports ASSETS) ---
+// The stylesheet link in the head block is already versioned by step 1; this
+// rewrites the same links anywhere else in the page, typically <script src>.
 
-const sitemapChanged = sitemap.run({ root: ROOT, pages, check: CHECK });
+const present = pages.filter((p) => !missing.includes(p.file));
+const assetsChanged = assets.run({ files: present.map((p) => p.file), check: CHECK });
+
+// --- 4. Sitemap lastmod (only if <root>/sitemap.xml exists) ---
+// Last, because the date depends on whether a page has uncommitted changes, and
+// steps 1-3 may have just made some. Asset versions don't count as a change.
+
+const sitemapChanged = sitemap.run({ root: ROOT, pages, check: CHECK, strip: assets.strip });
+
+// --- Article text against dateModified (pages of type "article" with a textHash) ---
+// Reported, not fixed: only you know whether an edit is worth a new date. In
+// --check it fails the run; otherwise it's a warning, so editing in steps works.
+
+const articles = present
+  .filter((p) => PAGES[p.slug].type === "article")
+  .map((p) => ({
+    ...p,
+    html: fs.readFileSync(path.join(ROOT, p.file), "utf8"),
+    recorded: PAGES[p.slug].perLang[p.lang].textHash,
+    dateModified: articleDates(PAGES[p.slug], p.lang).modified,
+  }));
+if (process.argv.includes("--article-hashes")) {
+  for (const a of articles) console.log(`${a.slug} ${a.lang} ${articleTextHash(a.html) || "(no <article> element)"}`);
+}
+const articleProblems = articleDateProblems(articles.filter((a) => a.recorded));
 
 // --- Report ---
 // In --check mode every step runs before exiting, so one out-of-date step doesn't
@@ -347,6 +418,11 @@ function report(label, changed) {
 
 report("Head blocks", headChanged);
 if (data.BODY) report("Body blocks", bodyChanged);
+if (assets.enabled) report("Asset versions", assetsChanged);
 if (sitemap.exists(ROOT)) report("Sitemap lastmod", sitemapChanged);
+if (articleProblems.length) {
+  (CHECK ? console.error : console.warn)(`Article dateModified out of date:\n  - ${articleProblems.join("\n  - ")}`);
+}
 
-if (CHECK && (headChanged.length || bodyChanged.length || sitemapChanged.length)) process.exit(1);
+const outOfDate = headChanged.length || bodyChanged.length || assetsChanged.length || sitemapChanged.length;
+if (CHECK && (outOfDate || articleProblems.length)) process.exit(1);
