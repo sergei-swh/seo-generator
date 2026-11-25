@@ -150,6 +150,13 @@ The builders are ordinary functions near the top of `generate-seo.js`. Swap or
 add your own (`LocalBusiness`, `Event`, `Recipe`...) and register them in
 `LD_BY_TYPE`; the rest of the script doesn't need to change.
 
+## As an agent skill
+
+`SKILL.md` in this repository describes the same workflow for coding agents that read the
+SKILL.md format (Claude Code, Codex CLI, Cursor and others): put the
+markers in the pages, write the data file from the pages that already exist, run `--check`, then
+run. Clone the repository into your skills folder as `seo-generator` to use it from there.
+
 ## What it does NOT do
 
 It only touches what's between the markers, the `src`/`href` of the files in
