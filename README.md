@@ -139,6 +139,13 @@ Each page has a `type` that picks its JSON-LD:
 | `article` | Article + BreadcrumbList |
 | `page` | BreadcrumbList |
 
+On a multilingual site the text inside listing JSON-LD (the property name, the
+address, the amenities) should be in the page's language too. Write it once in the
+data file, in the default language, and add an `LD_LOCAL` table with the other
+languages (see `example/seo-data.js`); a value with no translation is reported
+instead of going out in the wrong language silently. `property.numberOfBedrooms` is
+optional and sits next to `numberOfRooms`.
+
 The builders are ordinary functions near the top of `generate-seo.js`. Swap or
 add your own (`LocalBusiness`, `Event`, `Recipe`...) and register them in
 `LD_BY_TYPE`; the rest of the script doesn't need to change.
@@ -160,7 +167,8 @@ there ends up correctly and consistently in every file.
 Before writing anything, the script checks that every language in `LANGS` has
 matching data in `paths`, `PAGES[*].perLang` and `homeLabel`, that per-page
 `langs` only name known languages, that articles have dates and an author,
-that `TIME_ZONE` is a real time zone and that every file in `ASSETS` exists.
+that `TIME_ZONE` is a real time zone, that every file in `ASSETS` exists and
+that `LD_LOCAL` only names languages from `LANGS`.
 If not, it fails with a list of what's missing instead of writing a broken
 `hreflang` link (with `undefined` in the URL) into every page. That isn't
 hypothetical — it's here because that exact bug happened once.

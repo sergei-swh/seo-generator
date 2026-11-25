@@ -100,7 +100,8 @@ const PAGES = {
       property: {
         schemaType: "SingleFamilyResidence", // default is Apartment
         name: "Three-bedroom house by the river",
-        numberOfRooms: 4,
+        numberOfRooms: 4, // every room, living room included
+        numberOfBedrooms: 3, // optional: the sleeping rooms alone
         numberOfBathroomsTotal: 2,
         floorSize: 140,
         lotSize: 500, // goes to additionalProperty, see realEstateListingLd()
@@ -163,6 +164,22 @@ const PAGES = {
   },
 };
 
+// Optional: translations of the text inside listing JSON-LD. The values in `listing`
+// above are written once, in DEFAULT_LANG; this table puts them into the page's
+// language: the property name, the address values, the amenities, "Plot size" and
+// "Floors". A value with no entry goes out as written, and the generator prints a
+// warning for a name, an amenity or those two labels, so a new amenity doesn't stay
+// in English by accident. Leave LD_LOCAL out and every language gets the original.
+const LD_LOCAL = {
+  "Three-bedroom house by the river": { fr: "Maison de trois chambres au bord de la rivière" },
+  Exampleville: { fr: "Exempleville" },
+  Garden: { fr: "Jardin" },
+  Parking: { fr: "Parking" },
+  Fireplace: { fr: "Cheminée" },
+  "Plot size": { fr: "Surface du terrain" },
+  Floors: { fr: "Niveaux" },
+};
+
 // Optional: body text for <!-- BODY:key --> markers, as (slug, lang) => ({ key: html }).
 // Here it reads the same dictionary the browser uses, assets/js/i18n.js, so the
 // static HTML and what app.js draws come from one source.
@@ -179,4 +196,4 @@ function BODY(slug, lang) {
   return { title: esc(t.title), text: esc(t.text) };
 }
 
-module.exports = { DOMAIN, LANGS, DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, paths, homeLabel, PAGES, BODY };
+module.exports = { DOMAIN, LANGS, DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, paths, homeLabel, PAGES, LD_LOCAL, BODY };

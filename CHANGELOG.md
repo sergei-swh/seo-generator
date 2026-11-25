@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.2 — 2026-11-25
+
+New, both for `listing` pages and both optional:
+
+- `LD_LOCAL`: translations for the text values inside listing JSON-LD. Until now the
+  property name, the address, the amenities and the two labels "Plot size" and
+  "Floors" went out in the language of the data file on every page, so a French
+  page carried `"name": "Garden"`. The data file now exports
+  `LD_LOCAL = { "Garden": { fr: "Jardin" } }`; the default language keeps the value as
+  written. A name, an amenity or one of the two labels with no entry for the page's
+  language goes out unchanged and is reported once on the console, so a new amenity
+  doesn't stay in English by accident (address values are translated when there is
+  an entry, but a missing one isn't reported: country codes and place names are often
+  the same in every language). The table is checked before anything is written:
+  an entry for a language that isn't in `LANGS` fails the run.
+- `property.numberOfBedrooms`: written next to `numberOfRooms`, which counts every
+  room including the living room.
+
+Data files from 2.1 keep working with no change in the output: without `LD_LOCAL`
+nothing is translated or reported, and without `numberOfBedrooms` nothing is added.
+`example/seo-data.js` shows both.
+
 ## 2.1 — 2026-11-15
 
 Fixes. The first three were found on the production site after 2.0.

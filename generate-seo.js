@@ -27,7 +27,7 @@
 //   --article-hashes  print the text fingerprint of every article page
 //
 // Your data file must export: DOMAIN, LANGS, paths, homeLabel, PAGES. Optional:
-// DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, BODY. See example/seo-data.js
+// DEFAULT_LANG, STYLESHEET_PATH, ASSETS, TIME_ZONE, BODY, LD_LOCAL. See example/seo-data.js
 // for the shape and comments. It's plain data (a CommonJS module), not config for this script —
 // adapt buildHead()/the *Ld() functions below for your own page types and schema.
 
@@ -63,6 +63,11 @@ const DEFAULT_LANG = data.DEFAULT_LANG || (LANGS.includes("en") ? "en" : LANGS[0
 const TIME_ZONE = data.TIME_ZONE || "UTC";
 // Files whose links get a ?v= version (assets.js). Empty if unset.
 const assets = assetVersions.create(ROOT, data.ASSETS);
+// Optional translations of the text values inside listing JSON-LD (property name,
+// address, amenities, "Plot size", "Floors"): { "Garden": { fr: "Jardin" } }. The
+// data file writes those values once, in DEFAULT_LANG; without LD_LOCAL they go
+// out in that language on every page, as in 2.1 and earlier.
+const LD_LOCAL = data.LD_LOCAL || null;
 
 function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -116,6 +121,23 @@ function productLd(slug, lang, page, url) {
   };
 }
 
+// Puts a JSON-LD text value into the page's language, from LD_LOCAL. The default
+// language keeps the value as written. A value with no translation goes out
+// unchanged; with `warn` it is reported once, so a new amenity doesn't stay
+// untranslated silently. Without LD_LOCAL nothing changes and nothing is reported.
+const ldWarned = new Set();
+function ldLocal(value, lang, warn) {
+  if (!LD_LOCAL || lang === DEFAULT_LANG || typeof value !== "string") return value;
+  const hit = LD_LOCAL[value] && LD_LOCAL[value][lang];
+  if (hit) return hit;
+  const key = `${lang}\u0000${value}`;
+  if (warn && !ldWarned.has(key)) {
+    ldWarned.add(key);
+    console.warn(`LD_LOCAL: no ${lang} translation for "${value}"`);
+  }
+  return value;
+}
+
 // type "listing": schema.org RealEstateListing, as used in production for
 // apartments and houses for sale.
 function realEstateListingLd(slug, lang, page, url) {
@@ -126,21 +148,32 @@ function realEstateListingLd(slug, lang, page, url) {
   // SingleFamilyResidence, or search engines get the wrong kind of home.
   const about = {
     "@type": p.schemaType || "Apartment",
-    name: p.name,
+    name: ldLocal(p.name, lang, true),
     numberOfRooms: p.numberOfRooms,
+    // Optional. numberOfRooms counts every room including the living room;
+    // numberOfBedrooms is the sleeping rooms alone.
+    ...(p.numberOfBedrooms ? { numberOfBedrooms: p.numberOfBedrooms } : {}),
     numberOfBathroomsTotal: p.numberOfBathroomsTotal,
     floorSize: { "@type": "QuantitativeValue", value: p.floorSize, unitCode: "MTK" },
   };
-  if (p.address) about.address = { "@type": "PostalAddress", ...p.address };
+  if (p.address) {
+    about.address = {
+      "@type": "PostalAddress",
+      ...Object.fromEntries(Object.entries(p.address).map(([k, v]) => [k, ldLocal(v, lang)])),
+    };
+  }
   if (p.geo) about.geo = { "@type": "GeoCoordinates", ...p.geo };
   if (p.amenityFeature) {
-    about.amenityFeature = p.amenityFeature.map((name) => ({ "@type": "LocationFeatureSpecification", name }));
+    about.amenityFeature = p.amenityFeature.map((name) => ({
+      "@type": "LocationFeatureSpecification",
+      name: ldLocal(name, lang, true),
+    }));
   }
   // Plot size and number of floors have no dedicated properties on these types,
   // so they go into additionalProperty instead of inventing a lotSize.
   const extra = [];
-  if (p.lotSize) extra.push({ "@type": "PropertyValue", name: "Plot size", value: p.lotSize, unitCode: "MTK" });
-  if (p.numberOfFloors) extra.push({ "@type": "PropertyValue", name: "Floors", value: p.numberOfFloors });
+  if (p.lotSize) extra.push({ "@type": "PropertyValue", name: ldLocal("Plot size", lang, true), value: p.lotSize, unitCode: "MTK" });
+  if (p.numberOfFloors) extra.push({ "@type": "PropertyValue", name: ldLocal("Floors", lang, true), value: p.numberOfFloors });
   if (extra.length) about.additionalProperty = extra;
 
   return {
@@ -284,6 +317,18 @@ function validateData() {
     problems.push(`TIME_ZONE "${TIME_ZONE}" is not a time zone name (use one like "Europe/Paris")`);
   }
   for (const rel of assets.missing) problems.push(`ASSETS lists ${rel}, which is not in ${ROOT}`);
+  if (LD_LOCAL) {
+    for (const [value, byLang] of Object.entries(LD_LOCAL)) {
+      if (!byLang || typeof byLang !== "object") {
+        problems.push(`LD_LOCAL["${value}"] must be an object like { fr: "..." }`);
+        continue;
+      }
+      for (const [lang, text] of Object.entries(byLang)) {
+        if (!LANGS.includes(lang)) problems.push(`LD_LOCAL["${value}"] has language "${lang}", which is not in LANGS`);
+        else if (typeof text !== "string" || !text) problems.push(`LD_LOCAL["${value}"].${lang} must be a non-empty string`);
+      }
+    }
+  }
   for (const lang of LANGS) {
     if (!homeLabel[lang]) problems.push(`homeLabel.${lang} is missing`);
   }
